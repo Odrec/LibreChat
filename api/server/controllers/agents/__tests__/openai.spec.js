@@ -30,6 +30,7 @@ const mockReleaseReservation = jest.fn().mockResolvedValue(undefined);
 const mockReserveRemoteAgentBalance = jest
   .fn()
   .mockResolvedValue({ release: mockReleaseReservation });
+const mockAddEstimatedUsageIfUnreported = jest.fn().mockResolvedValue(undefined);
 const mockEnrollAgentExecution = jest.fn();
 let mockExecution;
 
@@ -272,6 +273,7 @@ jest.mock('@librechat/api', () => ({
   getTransactionsConfig: mockGetTransactionsConfig,
   recordCollectedUsage: mockRecordCollectedUsage,
   reserveRemoteAgentBalance: mockReserveRemoteAgentBalance,
+  addEstimatedUsageIfUnreported: mockAddEstimatedUsageIfUnreported,
   createSubagentUsageSink: jest.fn().mockReturnValue(jest.fn()),
   resolveAgentTokenConfig: jest.fn(({ agentId, byAgentId, fallback }) =>
     agentId != null && byAgentId?.has(agentId) ? byAgentId.get(agentId) : fallback,
@@ -2022,6 +2024,29 @@ describe('OpenAIChatCompletionController', () => {
         expect.objectContaining({
           model: 'gpt-4',
         }),
+      );
+    });
+  });
+
+  describe('unreported usage', () => {
+    it('estimates usage the provider did not report before recording it', async () => {
+      const api = require('@librechat/api');
+      const runMessages = [{ role: 'assistant', content: 'pong' }];
+      api.validateRequest.mockReturnValueOnce({ request: req.body });
+      api.createRun.mockResolvedValueOnce({
+        processStream: mockProcessStream,
+        getRunMessages: () => runMessages,
+      });
+
+      await OpenAIChatCompletionController(req, res);
+
+      expect(mockAddEstimatedUsageIfUnreported).toHaveBeenCalledWith(
+        expect.objectContaining({ messages: req.body.messages, runMessages }),
+      );
+      const [{ collectedUsage }] = mockAddEstimatedUsageIfUnreported.mock.calls[0];
+      expect(mockRecordCollectedUsage.mock.calls[0][1].collectedUsage).toBe(collectedUsage);
+      expect(mockAddEstimatedUsageIfUnreported.mock.invocationCallOrder[0]).toBeLessThan(
+        mockRecordCollectedUsage.mock.invocationCallOrder[0],
       );
     });
   });

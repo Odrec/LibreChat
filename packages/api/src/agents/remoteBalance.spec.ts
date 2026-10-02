@@ -2,11 +2,13 @@ import mongoose from 'mongoose';
 import { ViolationTypes } from 'librechat-data-provider';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { createMethods, createModels } from '@librechat/data-schemas';
+import { AIMessage, ToolMessage } from '@librechat/agents/langchain/messages';
+import type { UsageMetadata } from '@librechat/agents/langchain/messages';
 import type { IBalance } from '@librechat/data-schemas';
 import type { Response } from 'express';
 import type { RemoteAgentBalanceDeps } from './remoteBalance';
 import type { ServerRequest } from '~/types/http';
-import { reserveRemoteAgentBalance } from './remoteBalance';
+import { addEstimatedUsageIfUnreported, reserveRemoteAgentBalance } from './remoteBalance';
 import { countTokens } from '~/utils/tokenizer';
 
 jest.mock('@librechat/data-schemas', () => ({
@@ -125,5 +127,64 @@ describe('reserveRemoteAgentBalance', () => {
 
     await expect(reserve(user, deps, false)).resolves.toBeUndefined();
     expect(deps.reserveBalance).not.toHaveBeenCalled();
+  });
+});
+
+describe('addEstimatedUsageIfUnreported', () => {
+  const instructions = 'You are a helpful assistant.';
+  const messages = [{ role: 'user', content: 'Summarize the attached report.' }];
+  const runMessages = [
+    new AIMessage({
+      content: [
+        { type: 'thinking', thinking: 'The user wants a summary.' },
+        { type: 'text', text: 'Here is the summary.' },
+      ],
+      tool_calls: [{ id: 'call-1', name: 'search', args: { query: 'report' } }],
+    }),
+    new ToolMessage({
+      content: 'search results that the model did not write',
+      tool_call_id: 'call-1',
+    }),
+    new AIMessage('Done.'),
+  ];
+
+  it('adds a tokenizer estimate when no model call reported usage', async () => {
+    const collectedUsage: UsageMetadata[] = [];
+
+    await addEstimatedUsageIfUnreported({ collectedUsage, instructions, messages, runMessages });
+
+    const input = await countTokens([instructions, 'Summarize the attached report.'].join('\n'));
+    const output = await countTokens(
+      [
+        'The user wants a summary.',
+        'Here is the summary.',
+        'search',
+        '{"query":"report"}',
+        'Done.',
+      ].join('\n'),
+    );
+    expect(collectedUsage).toEqual([
+      { input_tokens: input, output_tokens: output, total_tokens: input + output },
+    ]);
+  });
+
+  it('treats usage reported as all zeros as unreported', async () => {
+    const collectedUsage: UsageMetadata[] = [
+      { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    ];
+
+    await addEstimatedUsageIfUnreported({ collectedUsage, instructions, messages, runMessages });
+
+    expect(collectedUsage).toHaveLength(2);
+    expect(collectedUsage[1].output_tokens).toBeGreaterThan(0);
+  });
+
+  it('leaves usage the provider reported untouched', async () => {
+    const reported = { input_tokens: 120, output_tokens: 30, total_tokens: 150 };
+    const collectedUsage: UsageMetadata[] = [reported];
+
+    await addEstimatedUsageIfUnreported({ collectedUsage, instructions, messages, runMessages });
+
+    expect(collectedUsage).toEqual([reported]);
   });
 });

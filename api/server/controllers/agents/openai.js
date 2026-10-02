@@ -38,6 +38,7 @@ const {
   createErrorResponse,
   recordCollectedUsage,
   reserveRemoteAgentBalance,
+  addEstimatedUsageIfUnreported,
   createSubagentUsageSink,
   getTransactionsConfig,
   resolveAgentTokenConfig,
@@ -1207,6 +1208,13 @@ const executeOpenAIChatCompletion = async (envelope, { req, res }) => {
               logger.error(`[OpenAI API] Tool Error "${toolId}"`, getSafeErrorMetadata(error));
             },
           },
+        });
+
+        await addEstimatedUsageIfUnreported({
+          collectedUsage,
+          instructions: primaryConfig.instructions,
+          messages: request.messages,
+          runMessages: run.getRunMessages?.(),
         });
 
         // Record token usage against balance

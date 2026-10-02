@@ -30,6 +30,7 @@ const {
   extractManualSkills,
   recordCollectedUsage,
   reserveRemoteAgentBalance,
+  addEstimatedUsageIfUnreported,
   createSubagentUsageSink,
   getTransactionsConfig,
   resolveAgentTokenConfig,
@@ -1428,6 +1429,13 @@ const executeResponse = async (envelope, { req, res }) => {
           },
         });
 
+        await addEstimatedUsageIfUnreported({
+          collectedUsage,
+          instructions: primaryConfig.instructions,
+          messages: allMessages,
+          runMessages: run.getRunMessages?.(),
+        });
+
         // Record token usage against balance
         const balanceConfig = getBalanceConfig(appConfig);
         const transactionsConfig = getTransactionsConfig(appConfig);
@@ -1664,6 +1672,13 @@ const executeResponse = async (envelope, { req, res }) => {
               logger.error(`[Responses API] Tool Error "${toolId}"`, getSafeErrorMetadata(error));
             },
           },
+        });
+
+        await addEstimatedUsageIfUnreported({
+          collectedUsage,
+          instructions: primaryConfig.instructions,
+          messages: allMessages,
+          runMessages: run.getRunMessages?.(),
         });
 
         // Record token usage against balance

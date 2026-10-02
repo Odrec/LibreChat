@@ -15,6 +15,7 @@ const mockReleaseReservation = jest.fn().mockResolvedValue(undefined);
 const mockReserveRemoteAgentBalance = jest
   .fn()
   .mockResolvedValue({ release: mockReleaseReservation });
+const mockAddEstimatedUsageIfUnreported = jest.fn().mockResolvedValue(undefined);
 const mockGetTransactionsConfig = jest.fn().mockReturnValue({ enabled: true });
 const mockResolveMemoryAvailability = jest.fn().mockResolvedValue(true);
 const mockInitialSessions = new Map([['execute_code', { session_id: 'seeded' }]]);
@@ -320,6 +321,7 @@ jest.mock('@librechat/api', () => ({
   getTransactionsConfig: mockGetTransactionsConfig,
   recordCollectedUsage: mockRecordCollectedUsage,
   reserveRemoteAgentBalance: mockReserveRemoteAgentBalance,
+  addEstimatedUsageIfUnreported: mockAddEstimatedUsageIfUnreported,
   createSubagentUsageSink: jest.fn().mockReturnValue(jest.fn()),
   CHILD_THREAD_READ_ONLY_ERROR:
     'This subagent thread is view-only. Continue it from its parent agent or create a separate chat.',
@@ -2381,6 +2383,37 @@ describe('createResponse controller', () => {
         );
         expect(loadToolsForExecution).toHaveBeenLastCalledWith(
           expect.objectContaining({ signal: undefined }),
+        );
+      },
+    );
+  });
+
+  describe('unreported usage', () => {
+    it.each([false, true])(
+      'estimates usage the provider did not report before recording it (stream=%s)',
+      async (stream) => {
+        const api = require('@librechat/api');
+        const inputMessages = [{ role: 'user', content: 'Hello' }];
+        const runMessages = [{ role: 'assistant', content: 'pong' }];
+        req.body.stream = stream;
+        api.validateResponseRequest.mockReturnValueOnce({
+          request: { model: 'agent-123', input: 'Hello', stream },
+        });
+        api.convertInputToMessages.mockReturnValueOnce(inputMessages);
+        api.createRun.mockResolvedValueOnce({
+          processStream: jest.fn().mockResolvedValue(undefined),
+          getRunMessages: () => runMessages,
+        });
+
+        await createResponse(req, res);
+
+        expect(mockAddEstimatedUsageIfUnreported).toHaveBeenCalledWith(
+          expect.objectContaining({ messages: inputMessages, runMessages }),
+        );
+        const [{ collectedUsage }] = mockAddEstimatedUsageIfUnreported.mock.calls[0];
+        expect(mockRecordCollectedUsage.mock.calls[0][1].collectedUsage).toBe(collectedUsage);
+        expect(mockAddEstimatedUsageIfUnreported.mock.invocationCallOrder[0]).toBeLessThan(
+          mockRecordCollectedUsage.mock.invocationCallOrder[0],
         );
       },
     );
